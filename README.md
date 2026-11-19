@@ -132,6 +132,10 @@ The intended developer workflow is:
 
 No application run or test commands are available at the current documentation-only stage.
 
+## Documentation
+
+- [Business scenario and system boundaries](docs/business-scenario.md)
+
 ## Implementation Roadmap
 
 ### Milestone 1 — Define the Integration
