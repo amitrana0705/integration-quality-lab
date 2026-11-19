@@ -136,6 +136,7 @@ No application run or test commands are available at the current documentation-o
 
 - [Business scenario and system boundaries](docs/business-scenario.md)
 - [Acceptance criteria and integration risks](docs/acceptance-criteria.md)
+- [API contracts and mapping rules](docs/api-contracts.md)
 
 ## Implementation Roadmap
 
