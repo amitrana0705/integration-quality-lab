@@ -135,6 +135,7 @@ No application run or test commands are available at the current documentation-o
 ## Documentation
 
 - [Business scenario and system boundaries](docs/business-scenario.md)
+- [Acceptance criteria and integration risks](docs/acceptance-criteria.md)
 
 ## Implementation Roadmap
 
