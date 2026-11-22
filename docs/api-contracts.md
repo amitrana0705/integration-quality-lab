@@ -247,6 +247,22 @@ Failure codes:
 - DOWNSTREAM_REJECTED
 - DOWNSTREAM_PROTOCOL_ERROR
 
+## Availability and Correlation Clarifications
+
+- Any endpoint requiring unavailable storage can return HTTP 503
+  with error code SERVICE_UNAVAILABLE.
+- After an uncertain order submission, retry with the same
+  idempotency key and identical payload.
+- After an uncertain replay response, check order status before retrying.
+- Fulfilment submissions can be retried with the same
+  externalOrderId and identical payload.
+- An invalid supplied X-Correlation-ID returns HTTP 422.
+  The service generates a valid correlation ID for the error response.
+- Response headers identify the current HTTP request.
+  The order body's correlationId retains the original order ID.
+- Replay requires no request body; Content-Type is required only
+  for POST requests that carry a JSON payload.
+
 ## Related Documents
 
 - [Business scenario](business-scenario.md)
