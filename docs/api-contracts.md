@@ -35,7 +35,7 @@ Identifiers are case-sensitive. Values are not trimmed or otherwise normalised.
 
 ### Content-Type
 
-POST requests require `application/json`.
+POST requests carrying a JSON payload require application/json.
 
 ### Idempotency-Key
 
@@ -259,7 +259,7 @@ Failure codes:
 - An invalid supplied X-Correlation-ID returns HTTP 422.
   The service generates a valid correlation ID for the error response.
 - Response headers identify the current HTTP request.
-  The order body's correlationId retains the original order ID.
+  The order body's correlationId retains the original order’s correlation ID.
 - Replay requires no request body; Content-Type is required only
   for POST requests that carry a JSON payload.
 
