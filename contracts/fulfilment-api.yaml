@@ -1,0 +1,279 @@
+openapi: 3.0.3
+
+info:
+  title: Integration Quality Lab - Fulfilment API
+  version: 0.1.0
+  description: |
+    Design contract for receiving and retrieving fulfilment orders.
+    Application implementation is pending.
+
+    externalOrderId uniquely identifies a fulfilment record.
+    Repeated identical submissions must not create duplicates.
+
+tags:
+  - name: Fulfilment
+
+paths:
+  /fulfilment-orders:
+    post:
+      tags: [Fulfilment]
+      operationId: submitFulfilmentOrder
+      summary: Create or return a fulfilment order
+      description: |
+        Persist a new order before returning 201.
+
+        If externalOrderId already exists with identical validated
+        field values, return the existing record with 200.
+        JSON property order does not affect equality.
+
+        If externalOrderId exists with different field values,
+        return 409 without modifying the existing record.
+
+        Enforce uniqueness atomically so concurrent identical
+        requests create exactly one record.
+
+        Preserve order identity across retries and replay.
+        No separate Idempotency-Key header is required.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FulfilmentOrder'
+            example:
+              externalOrderId: ORD-1001
+              sku: CHAIR-001
+              units: 2
+      responses:
+        '201':
+          description: New fulfilment order persisted
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FulfilmentOrder'
+              example:
+                externalOrderId: ORD-1001
+                sku: CHAIR-001
+                units: 2
+        '200':
+          $ref: '#/components/responses/OrderReturned'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /fulfilment-orders/{externalOrderId}:
+    parameters:
+      - $ref: '#/components/parameters/ExternalOrderId'
+    get:
+      tags: [Fulfilment]
+      operationId: getFulfilmentOrder
+      summary: Retrieve a stored fulfilment order
+      description: |
+        Return the destination record so callers and tests can
+        verify the stored order identity, product, and quantity.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          $ref: '#/components/responses/OrderReturned'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+components:
+  parameters:
+    ExternalOrderId:
+      name: externalOrderId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+      example: ORD-1001
+
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      description: |
+        Request tracing identifier.
+        The integration sends the original order's correlation ID
+        on every downstream delivery attempt.
+
+        Generate a UUID when absent.
+        Invalid supplied values return 422.
+        For an invalid value, generate a valid identifier for
+        the error response.
+      schema:
+        $ref: '#/components/schemas/TrackingId'
+      example: corr-1001
+
+  headers:
+    CorrelationId:
+      description: |
+        Correlation ID for this HTTP request.
+        Application responses must include this header.
+      schema:
+        $ref: '#/components/schemas/TrackingId'
+
+  schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[A-Za-z0-9_-]+$'
+      description: Case-sensitive; no trimming or normalisation
+
+    TrackingId:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z0-9_-]+$'
+
+    FulfilmentOrder:
+      type: object
+      additionalProperties: false
+      required:
+        - externalOrderId
+        - sku
+        - units
+      properties:
+        externalOrderId:
+          $ref: '#/components/schemas/Identifier'
+        sku:
+          $ref: '#/components/schemas/Identifier'
+        units:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: No coercion from strings or booleans
+
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - correlationId
+      properties:
+        code:
+          type: string
+          enum:
+            - INVALID_JSON
+            - VALIDATION_ERROR
+            - FULFILMENT_ORDER_CONFLICT
+            - FULFILMENT_ORDER_NOT_FOUND
+            - UNSUPPORTED_MEDIA_TYPE
+            - SERVICE_UNAVAILABLE
+        message:
+          type: string
+          minLength: 1
+          description: Must not expose credentials or stack traces
+        correlationId:
+          $ref: '#/components/schemas/TrackingId'
+
+  responses:
+    OrderReturned:
+      description: Stored fulfilment order
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FulfilmentOrder'
+          example:
+            externalOrderId: ORD-1001
+            sku: CHAIR-001
+            units: 2
+
+    BadRequest:
+      description: Malformed JSON; code INVALID_JSON
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Conflict:
+      description: |
+        Existing externalOrderId with different field values;
+        code FULFILMENT_ORDER_CONFLICT.
+        The existing record remains unchanged.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: FULFILMENT_ORDER_CONFLICT
+            message: The order ID already has a different payload.
+            correlationId: corr-1001
+
+    UnsupportedMediaType:
+      description: Unsupported content type; code UNSUPPORTED_MEDIA_TYPE
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    ValidationError:
+      description: Invalid input or header; code VALIDATION_ERROR
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: VALIDATION_ERROR
+            message: Request validation failed.
+            correlationId: corr-1001
+
+    NotFound:
+      description: |
+        Unknown fulfilment order;
+        code FULFILMENT_ORDER_NOT_FOUND.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unavailable:
+      description: |
+        Required storage is unavailable;
+        code SERVICE_UNAVAILABLE.
+        A caller may retry using the same externalOrderId
+        and identical payload.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
