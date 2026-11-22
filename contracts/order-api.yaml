@@ -1,0 +1,397 @@
+openapi: 3.0.3
+
+info:
+  title: Integration Quality Lab - Order API
+  version: 0.1.0
+  description: |
+    Design contract for order acceptance, delivery status, and replay.
+    Application implementation is pending.
+
+    Acceptance does not confirm fulfilment.
+    Delivery requires a matching successful downstream response.
+
+tags:
+  - name: Orders
+
+paths:
+  /orders:
+    post:
+      tags: [Orders]
+      operationId: submitOrder
+      summary: Accept an order for delivery
+      description: |
+        A new valid order is persisted before acceptance.
+
+        The same idempotency key and validated payload return the
+        existing order without scheduling another delivery.
+        JSON property order does not affect payload equality.
+
+        Reusing a key with a different payload is a conflict.
+        Reusing an orderId under another key is also a conflict.
+
+        Invalid requests do not reserve the key.
+        Keys remain associated for the lifetime of the stored order.
+        Concurrent duplicates must produce one logical order.
+
+        Location is returned for a newly accepted order.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderInput'
+            example:
+              orderId: ORD-1001
+              productId: CHAIR-001
+              quantity: 2
+      responses:
+        '202':
+          description: New order accepted; fulfilment not yet confirmed
+          headers:
+            Location:
+              description: Relative URL for retrieving delivery status
+              schema:
+                type: string
+              example: /orders/ORD-1001
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatus'
+              example:
+                orderId: ORD-1001
+                status: PENDING
+                correlationId: corr-1001
+                deliveryCycle: 1
+                attemptCount: 0
+                failure: null
+        '200':
+          $ref: '#/components/responses/OrderReturned'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /orders/{orderId}:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    get:
+      tags: [Orders]
+      operationId: getOrder
+      summary: Retrieve delivery status
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          $ref: '#/components/responses/OrderReturned'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /orders/{orderId}/replay:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    post:
+      tags: [Orders]
+      operationId: replayOrder
+      summary: Replay an eligible failed delivery
+      description: |
+        No request body is required.
+
+        Only failed deliveries with failure.replayEligible=true
+        may be replayed.
+
+        Preserve the original order payload and correlation ID.
+        Increment deliveryCycle and reset attemptCount to zero.
+        Retain earlier delivery history.
+
+        Concurrent replay requests may schedule at most one active
+        delivery cycle. Other requests receive a conflict.
+
+        Pending, processing, delivered, and permanently failed
+        orders cannot be replayed.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '202':
+          description: New delivery cycle accepted
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatus'
+              example:
+                orderId: ORD-1001
+                status: PENDING
+                correlationId: corr-1001
+                deliveryCycle: 2
+                attemptCount: 0
+                failure: null
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+components:
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+      example: ORD-1001
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Case-sensitive key associated with one validated payload.
+        Retained for the lifetime of the stored order.
+      schema:
+        $ref: '#/components/schemas/TrackingId'
+      example: order-request-1001
+
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      description: |
+        Request tracing identifier. Generate a UUID when absent.
+        Invalid supplied values return 422.
+
+        A request ID does not replace an existing order's stored
+        correlation ID. If the supplied value is invalid, generate
+        a valid identifier for the error response.
+      schema:
+        $ref: '#/components/schemas/TrackingId'
+      example: corr-1001
+
+  headers:
+    CorrelationId:
+      description: |
+        Correlation ID for this HTTP request.
+        The order representation retains the original order's ID.
+        Application responses must include this header.
+      schema:
+        $ref: '#/components/schemas/TrackingId'
+
+  schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[A-Za-z0-9_-]+$'
+      description: Case-sensitive; no trimming or normalisation
+
+    TrackingId:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: '^[A-Za-z0-9_-]+$'
+
+    OrderInput:
+      type: object
+      additionalProperties: false
+      required:
+        - orderId
+        - productId
+        - quantity
+      properties:
+        orderId:
+          $ref: '#/components/schemas/Identifier'
+        productId:
+          $ref: '#/components/schemas/Identifier'
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: No coercion from strings or booleans
+
+    OrderStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - orderId
+        - status
+        - correlationId
+        - deliveryCycle
+        - attemptCount
+        - failure
+      properties:
+        orderId:
+          $ref: '#/components/schemas/Identifier'
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, DELIVERED, FAILED]
+          description: |
+            Allowed transitions:
+            PENDING to PROCESSING;
+            PROCESSING to DELIVERED or FAILED;
+            FAILED to PENDING through eligible replay.
+            DELIVERED is terminal.
+        correlationId:
+          $ref: '#/components/schemas/TrackingId'
+        deliveryCycle:
+          type: integer
+          minimum: 1
+        attemptCount:
+          type: integer
+          minimum: 0
+          maximum: 3
+          description: Downstream POST attempts started in this cycle
+        failure:
+          type: object
+          nullable: true
+          additionalProperties: false
+          description: |
+            Must be null unless status is FAILED.
+            Must contain failure details when status is FAILED.
+            RETRY_EXHAUSTED is replay eligible.
+            Other failure codes are not replay eligible.
+          required:
+            - code
+            - message
+            - replayEligible
+          properties:
+            code:
+              type: string
+              enum:
+                - RETRY_EXHAUSTED
+                - DOWNSTREAM_REJECTED
+                - DOWNSTREAM_PROTOCOL_ERROR
+            message:
+              type: string
+              minLength: 1
+            replayEligible:
+              type: boolean
+
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - correlationId
+      properties:
+        code:
+          type: string
+          enum:
+            - INVALID_JSON
+            - VALIDATION_ERROR
+            - IDEMPOTENCY_CONFLICT
+            - ORDER_ID_CONFLICT
+            - REPLAY_NOT_ALLOWED
+            - ORDER_NOT_FOUND
+            - UNSUPPORTED_MEDIA_TYPE
+            - SERVICE_UNAVAILABLE
+        message:
+          type: string
+          minLength: 1
+          description: Must not expose credentials or stack traces
+        correlationId:
+          $ref: '#/components/schemas/TrackingId'
+
+  responses:
+    OrderReturned:
+      description: Existing order with its current delivery status
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+
+    BadRequest:
+      description: Malformed JSON; code INVALID_JSON
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Conflict:
+      description: |
+        Conflicting request. Code is IDEMPOTENCY_CONFLICT,
+        ORDER_ID_CONFLICT, or REPLAY_NOT_ALLOWED, as applicable.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: IDEMPOTENCY_CONFLICT
+            message: The key is already associated with another payload.
+            correlationId: corr-1002
+
+    UnsupportedMediaType:
+      description: Unsupported content type; code UNSUPPORTED_MEDIA_TYPE
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    ValidationError:
+      description: Invalid input or header; code VALIDATION_ERROR
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: VALIDATION_ERROR
+            message: Request validation failed.
+            correlationId: corr-1001
+
+    NotFound:
+      description: Unknown order; code ORDER_NOT_FOUND
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unavailable:
+      description: |
+        Required storage is unavailable; code SERVICE_UNAVAILABLE.
+        A submission caller may retry with the same idempotency key.
+        A replay caller should check order status before retrying.
+      headers:
+        X-Correlation-ID:
+          $ref: '#/components/headers/CorrelationId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
