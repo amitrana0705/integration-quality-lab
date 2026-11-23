@@ -144,9 +144,9 @@ No application run or test commands are available at the current documentation-o
 
 ### Milestone 1 — Define the Integration
 
-- [ ] Document the business scenario and system boundaries.
-- [ ] Define acceptance criteria and integration risks.
-- [ ] Define API contracts and mapping rules.
+- [x] Document the business scenario and system boundaries.
+- [x] Define acceptance criteria and integration risks.
+- [x] Define API contracts and mapping rules.
 - [ ] Record the initial architecture decisions.
 
 ### Milestone 2 — Build One Working Journey
