@@ -263,6 +263,100 @@ Failure codes:
 - Replay requires no request body; Content-Type is required only
   for POST requests that carry a JSON payload.
 
+## Invalid and Conflicting Request Examples
+
+These examples describe expected behaviour for future API tests.
+They are not evidence of executed requests.
+
+### Invalid quantity
+
+Request: POST /orders
+
+Headers:
+
+```http
+Content-Type: application/json
+Idempotency-Key: invalid-order-1002
+X-Correlation-ID: corr-1002
+```
+
+Body:
+
+```json
+{
+  "orderId": "ORD-1002",
+  "productId": "CHAIR-001",
+  "quantity": 0
+}
+```
+
+Expected outcome:
+
+- HTTP 422 with code VALIDATION_ERROR.
+- No downstream delivery attempt.
+- No fulfilment record created.
+- The idempotency key is not reserved.
+
+This payload intentionally violates the schema and must not be
+included among examples expected to pass schema validation.
+
+### Conflicting payload for an existing idempotency key
+
+First request: POST /orders
+
+Headers:
+
+```http
+Content-Type: application/json
+Idempotency-Key: order-request-1003
+X-Correlation-ID: corr-1003
+```
+
+Body:
+
+```json
+{
+  "orderId": "ORD-1003",
+  "productId": "CHAIR-001",
+  "quantity": 2
+}
+```
+
+Expected initial response: HTTP 202.
+
+After the first request is accepted, submit a second request using
+the same idempotency key but a different quantity.
+
+Headers:
+
+```http
+Content-Type: application/json
+Idempotency-Key: order-request-1003
+X-Correlation-ID: corr-1003-second
+```
+
+Body:
+
+```json
+{
+  "orderId": "ORD-1003",
+  "productId": "CHAIR-001",
+  "quantity": 3
+}
+```
+
+Expected outcome for the second request:
+
+- HTTP 409 with code IDEMPOTENCY_CONFLICT.
+- The original order retains quantity 2.
+- The original stored correlation ID remains corr-1003.
+- No additional order or delivery cycle is created.
+- If fulfilment completes, its record has units 2.
+
+Both payloads individually conform to the schema. The conflict
+depends on the previously accepted request and requires a
+behavioural test.
+
 ## Related Documents
 
 - [Business scenario](business-scenario.md)
